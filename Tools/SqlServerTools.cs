@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using System.Data;
+using System.Data.SqlClient;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Data.SqlClient;
 using ModelContextProtocol.Server;
 
 namespace SqlServerMcp.Tools;
@@ -10,6 +10,47 @@ namespace SqlServerMcp.Tools;
 [McpServerToolType]
 public class SqlServerTools
 {
+    // Méthode utilitaire pour détecter la version de SQL Server
+    private static async Task<int> GetSqlServerVersion(SqlConnection connection, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // SQL Server 2008+ supporte ProductMajorVersion
+            await using var command = new SqlCommand("SELECT SERVERPROPERTY('ProductMajorVersion')", connection);
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+
+            if (result != DBNull.Value && result != null)
+            {
+                return Convert.ToInt32(result);
+            }
+        }
+        catch
+        {
+            // Si ProductMajorVersion n'existe pas, on est sur SQL Server 2005 ou antérieur
+        }
+
+        // Fallback pour SQL Server 2005 : parser ProductVersion
+        try
+        {
+            await using var versionCmd = new SqlCommand("SELECT CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR(20))", connection);
+            var versionString = (string?)await versionCmd.ExecuteScalarAsync(cancellationToken);
+            if (versionString != null)
+            {
+                var parts = versionString.Split('.');
+                if (parts.Length > 0 && int.TryParse(parts[0], out int major))
+                {
+                    return major;
+                }
+            }
+        }
+        catch
+        {
+            // En cas d'erreur, on assume SQL Server 2005
+        }
+
+        return 9; // SQL Server 2005 par défaut
+    }
+
     [McpServerTool(Name = "query"), Description("Execute a SQL query against a SQL Server database and return the results (limited to 100 rows by default)")]
     public static async Task<string> ExecuteQuery(
         [Description("The SQL Server connection string")] string connectionString,
@@ -225,32 +266,62 @@ public class SqlServerTools
         }
     }
 
-    [McpServerTool(Name = "list_databases"), Description("List all databases on the SQL Server instance")]
+    [McpServerTool(Name = "list_databases"), Description("List all databases on the SQL Server instance (SQL Server 2005+ compatible)")]
     public static async Task<string> ListDatabases(
         [Description("The SQL Server connection string (connect to master or any database)")] string connectionString,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var query = @"
-                SELECT 
-                    name,
-                    database_id,
-                    create_date,
-                    state_desc,
-                    recovery_model_desc
-                FROM sys.databases
-                WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
-                ORDER BY name";
-
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
 
+            // Détecter la version pour adapter la requête
+            var version = await GetSqlServerVersion(connection, cancellationToken);
+
+            // SQL Server 2005 (version 9) : Utiliser les colonnes numériques au lieu des _desc
+            // SQL Server 2008+ (version 10+) : Utiliser les colonnes _desc
+            var query = version <= 9 
+                ? @"
+                    SELECT 
+                        name,
+                        database_id,
+                        create_date,
+                        CASE state 
+                            WHEN 0 THEN 'ONLINE'
+                            WHEN 1 THEN 'RESTORING'
+                            WHEN 2 THEN 'RECOVERING'
+                            WHEN 3 THEN 'RECOVERY_PENDING'
+                            WHEN 4 THEN 'SUSPECT'
+                            WHEN 5 THEN 'EMERGENCY'
+                            WHEN 6 THEN 'OFFLINE'
+                            ELSE 'UNKNOWN'
+                        END AS state_desc,
+                        CASE recovery_model
+                            WHEN 1 THEN 'FULL'
+                            WHEN 2 THEN 'BULK_LOGGED'
+                            WHEN 3 THEN 'SIMPLE'
+                            ELSE 'UNKNOWN'
+                        END AS recovery_model_desc
+                    FROM sys.databases
+                    WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
+                    ORDER BY name"
+                : @"
+                    SELECT 
+                        name,
+                        database_id,
+                        create_date,
+                        state_desc,
+                        recovery_model_desc
+                    FROM sys.databases
+                    WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
+                    ORDER BY name";
+
             await using var command = new SqlCommand(query, connection);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            
+
             var databases = new List<object>();
-            
+
             while (await reader.ReadAsync(cancellationToken))
             {
                 databases.Add(new
@@ -266,6 +337,7 @@ public class SqlServerTools
             return JsonSerializer.Serialize(new
             {
                 success = true,
+                sqlServerVersion = version == 9 ? "SQL Server 2005" : $"SQL Server (version {version})",
                 databaseCount = databases.Count,
                 databases
             }, new JsonSerializerOptions { WriteIndented = true });

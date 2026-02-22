@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server for SQL Server built with .NET 10. This server provides tools to interact with SQL Server databases through the MCP protocol.
 
+**✅ Compatible with SQL Server 2005 and later versions**
+
 ## Features
 
 This MCP server exposes the following tools for SQL Server operations:
@@ -18,7 +20,7 @@ This MCP server exposes the following tools for SQL Server operations:
 ## Prerequisites
 
 - .NET 10 SDK or later
-- SQL Server instance (local or remote)
+- SQL Server instance (SQL Server 2005 or later)
 - Valid SQL Server connection string
 
 ## Installation
@@ -66,9 +68,38 @@ Then configure:
 - **Command**: `c:\Dev\sqlserver-mcp\publish\SqlServerMcp.exe`
 - **Arguments**: (leave empty)
 
-### Using from MCP Client
+### Connection Strings for SQL Server 2005
 
-Example connection strings:
+For **SQL Server 2005**, use these connection string formats:
+
+**Windows Authentication (Recommended for SQL Server 2005):**
+```
+Data Source=VM-SQLTEST;Database=master;Integrated Security=True;Encrypt=False
+```
+
+Or using the standard format:
+```
+Server=localhost;Database=MyDatabase;Integrated Security=true;Encrypt=false;
+```
+
+**SQL Server Authentication:**
+```
+Data Source=VM-SQLTEST;Database=MyDatabase;User Id=sa;Password=YourPassword;Encrypt=False
+```
+
+**Remote Server with specific port:**
+```
+Server=192.168.1.100,1433;Database=MyDatabase;User Id=myuser;Password=mypass;Encrypt=false;
+```
+
+**Named Instance:**
+```
+Server=localhost\SQLEXPRESS;Database=MyDatabase;Integrated Security=true;Encrypt=false;
+```
+
+### Connection Strings for SQL Server 2008+
+
+For **modern SQL Server versions**, use:
 
 **Windows Authentication:**
 ```
@@ -80,6 +111,12 @@ Server=localhost;Database=MyDatabase;Integrated Security=true;TrustServerCertifi
 Server=localhost;Database=MyDatabase;User Id=sa;Password=YourPassword;TrustServerCertificate=true;
 ```
 
+### 🔒 Security Notes
+
+- **SQL Server 2005**: This server enables TLS 1.0 support for compatibility. Use `Encrypt=false` in connection strings.
+- **Production environments**: Consider upgrading to a modern SQL Server version with TLS 1.2+ support.
+- **Certificates**: The server accepts self-signed certificates for development purposes.
+
 ## Available Tools
 
 ### query
@@ -88,12 +125,13 @@ Execute a SQL query and return results as JSON.
 **Parameters:**
 - `connectionString` (string, required): SQL Server connection string
 - `query` (string, required): The SQL query to execute
+- `maxRows` (int, optional): Maximum rows to return (default: 100, max: 1000)
 - `timeoutSeconds` (int, optional): Query timeout in seconds (default: 30)
 
 **Example:**
 ```json
 {
-  "connectionString": "Server=localhost;Database=AdventureWorks;Integrated Security=true;TrustServerCertificate=true;",
+  "connectionString": "Server=localhost;Database=AdventureWorks;Integrated Security=true;Encrypt=false;",
   "query": "SELECT TOP 10 * FROM Sales.Customer",
   "timeoutSeconds": 60
 }
@@ -109,7 +147,7 @@ List all tables in a database.
 **Example:**
 ```json
 {
-  "connectionString": "Server=localhost;Database=AdventureWorks;Integrated Security=true;TrustServerCertificate=true;",
+  "connectionString": "Server=localhost;Database=AdventureWorks;Integrated Security=true;Encrypt=false;",
   "schema": "Sales"
 }
 ```
@@ -125,14 +163,14 @@ Get detailed information about a table's structure.
 **Example:**
 ```json
 {
-  "connectionString": "Server=localhost;Database=AdventureWorks;Integrated Security=true;TrustServerCertificate=true;",
+  "connectionString": "Server=localhost;Database=AdventureWorks;Integrated Security=true;Encrypt=false;",
   "schema": "Sales",
   "tableName": "Customer"
 }
 ```
 
 ### list_databases
-List all user databases on the SQL Server instance.
+List all user databases on the SQL Server instance (auto-detects SQL Server 2005).
 
 **Parameters:**
 - `connectionString` (string, required): SQL Server connection string (can connect to any database)
@@ -140,7 +178,7 @@ List all user databases on the SQL Server instance.
 **Example:**
 ```json
 {
-  "connectionString": "Server=localhost;Integrated Security=true;TrustServerCertificate=true;"
+  "connectionString": "Server=localhost;Integrated Security=true;Encrypt=false;"
 }
 ```
 
@@ -243,6 +281,20 @@ All tools return JSON responses with a consistent format:
 - Use environment variables or secure configuration for connection strings
 - Be cautious with execute_non_query as it can modify data
 - Limit permissions on SQL Server accounts used by the MCP server
+- **SQL Server 2005**: Be aware that TLS 1.0 is enabled for compatibility but is considered insecure for production use
+
+## SQL Server Version Compatibility
+
+| Version | Status | Notes |
+|---------|--------|-------|
+| SQL Server 2005 | ✅ Fully Supported | Use `Encrypt=false` in connection strings |
+| SQL Server 2008/2008 R2 | ✅ Fully Supported | Use `TrustServerCertificate=true` |
+| SQL Server 2012+ | ✅ Fully Supported | Use `TrustServerCertificate=true` |
+| SQL Server 2016+ | ✅ Fully Supported | Use `TrustServerCertificate=true` |
+| SQL Server 2019+ | ✅ Fully Supported | Use `TrustServerCertificate=true` |
+| SQL Server 2022 | ✅ Fully Supported | Use `TrustServerCertificate=true` |
+
+The server automatically detects SQL Server 2005 and adapts its queries for compatibility.
 
 ## Development
 
